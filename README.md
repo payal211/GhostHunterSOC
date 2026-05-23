@@ -102,7 +102,7 @@ cd react-dashboard && npm install && npm start
 # Agent Architecture
 
 ```
-![alt text](diagrams/agent_architecture.png)
+C:\Users\payal\Downloads\AutonomSOC_GhostHunter\GhostHunterSOC\diagrams\agent_architecture.png
 ```
 
 ### Services after startup:
