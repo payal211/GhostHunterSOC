@@ -101,9 +101,7 @@ cd react-dashboard && npm install && npm start
 
 # Agent Architecture
 
-```
-![Alt text](GhostHunterSOC/diagrams/agent_architecture.png)
-```
+![Agent Architecture](diagrams/agent_architecture.png)
 
 ### Services after startup:
 | Service | URL |
@@ -172,10 +170,7 @@ GhostHunterSOC/
 ├── .github/
 │   └── workflows/
 │       └── ci-cd.yml                  # GitHub Actions workflow
-├── devpost/
-│   └── SUBMISSION.md                  # Devpost submission text
 ├── diagrams/                          # Architecture diagrams
-├── .dockerignore
 ├── .env.example
 ├── .gitignore
 ├── quickstart.sh

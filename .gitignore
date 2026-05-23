@@ -14,7 +14,10 @@ incidents.jsonl
 synthetic_logs.json
 chroma_db/
 ollama-models/
+
+# Local-only docs/build helpers
 devpost/
+.dockerignore
 AutonomSOC_Presentation.pptx
 AutonomSOC_Technical_Documentation.docx
 README copy.md
@@ -25,7 +28,6 @@ DEMO_GUIDE_FOR_EXPERTS.md
 .env
 .env.local
 .env.production
-.dockerignore
 
 # Node / Next.js
 node_modules/
