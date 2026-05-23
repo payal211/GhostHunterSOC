@@ -1,0 +1,324 @@
+# AutonomSOC — Kubernetes Deployment
+# Apply: kubectl apply -f k8s/full-stack.yaml
+# Prereqs: kubectl, helm (for kafka/neo4j)
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: autonomsoc
+  labels: { app: autonomsoc }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autonomsoc-config
+  namespace: autonomsoc
+data:
+  OLLAMA_HOST:    "http://autonomsoc-ollama:11434"
+  OLLAMA_MODEL:   "llama3.1"
+  NEO4J_URI:      "bolt://autonomsoc-neo4j:7687"
+  NEO4J_USER:     "neo4j"
+  KAFKA_BROKER:   "autonomsoc-kafka:9092"
+  ENV:            "production"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: autonomsoc-secrets
+  namespace: autonomsoc
+type: Opaque
+stringData:
+  NEO4J_PASSWORD:     "autonomsoc2026"
+  ANTHROPIC_API_KEY:  ""
+  OPENAI_API_KEY:     ""
+
+---
+# ── Ollama (On-Prem LLM) ────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autonomsoc-ollama
+  namespace: autonomsoc
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: ollama } }
+  template:
+    metadata: { labels: { app: ollama } }
+    spec:
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          ports: [{ containerPort: 11434 }]
+          volumeMounts:
+            - name: ollama-models
+              mountPath: /root/.ollama
+          resources:
+            requests: { memory: "4Gi", cpu: "2" }
+            limits:   { memory: "16Gi", cpu: "8" }
+      volumes:
+        - name: ollama-models
+          persistentVolumeClaim: { claimName: ollama-pvc }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-pvc
+  namespace: autonomsoc
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 30Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: autonomsoc-ollama
+  namespace: autonomsoc
+spec:
+  selector: { app: ollama }
+  ports: [{ port: 11434, targetPort: 11434 }]
+
+---
+# ── ChromaDB ─────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autonomsoc-chroma
+  namespace: autonomsoc
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: chroma } }
+  template:
+    metadata: { labels: { app: chroma } }
+    spec:
+      containers:
+        - name: chroma
+          image: chromadb/chroma:latest
+          ports: [{ containerPort: 8000 }]
+          volumeMounts:
+            - name: chroma-data
+              mountPath: /chroma/chroma
+      volumes:
+        - name: chroma-data
+          persistentVolumeClaim: { claimName: chroma-pvc }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chroma-pvc
+  namespace: autonomsoc
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 5Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: autonomsoc-chroma
+  namespace: autonomsoc
+spec:
+  selector: { app: chroma }
+  ports: [{ port: 8001, targetPort: 8000 }]
+
+---
+# ── Neo4j ─────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autonomsoc-neo4j
+  namespace: autonomsoc
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: neo4j } }
+  template:
+    metadata: { labels: { app: neo4j } }
+    spec:
+      containers:
+        - name: neo4j
+          image: neo4j:5.18
+          ports:
+            - { containerPort: 7474 }
+            - { containerPort: 7687 }
+          env:
+            - { name: NEO4J_AUTH, value: "neo4j/autonomsoc2026" }
+            - { name: NEO4J_PLUGINS, value: '["apoc"]' }
+          volumeMounts:
+            - name: neo4j-data
+              mountPath: /data
+          resources:
+            requests: { memory: "1Gi", cpu: "500m" }
+            limits:   { memory: "4Gi", cpu: "2" }
+      volumes:
+        - name: neo4j-data
+          persistentVolumeClaim: { claimName: neo4j-pvc }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: neo4j-pvc
+  namespace: autonomsoc
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 10Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: autonomsoc-neo4j
+  namespace: autonomsoc
+spec:
+  selector: { app: neo4j }
+  ports:
+    - { name: http,  port: 7474, targetPort: 7474 }
+    - { name: bolt,  port: 7687, targetPort: 7687 }
+
+---
+# ── Backend API ───────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autonomsoc-backend
+  namespace: autonomsoc
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: backend } }
+  template:
+    metadata: { labels: { app: backend } }
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/your-org/autonomsoc-backend:latest
+          ports: [{ containerPort: 8000 }]
+          envFrom:
+            - configMapRef:  { name: autonomsoc-config }
+            - secretRef:     { name: autonomsoc-secrets }
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { memory: "512Mi", cpu: "250m" }
+            limits:   { memory: "2Gi",   cpu: "1" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: autonomsoc-backend
+  namespace: autonomsoc
+spec:
+  selector: { app: backend }
+  ports: [{ port: 8000, targetPort: 8000 }]
+
+---
+# ── Kafka Consumer (Agent Pipeline) ──────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autonomsoc-consumer
+  namespace: autonomsoc
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: consumer } }
+  template:
+    metadata: { labels: { app: consumer } }
+    spec:
+      containers:
+        - name: consumer
+          image: ghcr.io/your-org/autonomsoc-backend:latest
+          command: ["python", "-m", "kafka.consumer"]
+          envFrom:
+            - configMapRef: { name: autonomsoc-config }
+            - secretRef:    { name: autonomsoc-secrets }
+          resources:
+            requests: { memory: "512Mi", cpu: "250m" }
+            limits:   { memory: "2Gi",   cpu: "1" }
+
+---
+# ── Frontend ──────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autonomsoc-frontend
+  namespace: autonomsoc
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: frontend } }
+  template:
+    metadata: { labels: { app: frontend } }
+    spec:
+      containers:
+        - name: frontend
+          image: ghcr.io/your-org/autonomsoc-frontend:latest
+          ports: [{ containerPort: 3000 }]
+          env:
+            - { name: NEXT_PUBLIC_API_URL, value: "https://api.autonomsoc.example.com" }
+          resources:
+            requests: { memory: "128Mi", cpu: "100m" }
+            limits:   { memory: "512Mi", cpu: "500m" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: autonomsoc-frontend
+  namespace: autonomsoc
+spec:
+  selector: { app: frontend }
+  ports: [{ port: 3000, targetPort: 3000 }]
+
+---
+# ── HPA ───────────────────────────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+  namespace: autonomsoc
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: autonomsoc-backend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+
+---
+# ── Ingress ───────────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: autonomsoc-ingress
+  namespace: autonomsoc
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [autonomsoc.example.com, api.autonomsoc.example.com]
+      secretName: autonomsoc-tls
+  rules:
+    - host: autonomsoc.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: autonomsoc-frontend, port: { number: 3000 } }
+    - host: api.autonomsoc.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: autonomsoc-backend, port: { number: 8000 } }

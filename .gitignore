@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+pipeline_results.json
+incidents.jsonl
+synthetic_logs.json
+chroma_db/
+ollama-models/
+AutonomSOC_Presentation.pptx
+AutonomSOC_Technical_Documentation.docx
+README copy.md
+DEMO_GUIDE_FOR_EXPERTS.md
+
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.vercel/
+*.tsbuildinfo
+next-env.d.ts
+
+# Docker
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Secrets
+*.pem
+*.key
+kubeconfig
+/tmp/kubeconfig

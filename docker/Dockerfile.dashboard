@@ -1,0 +1,20 @@
+# ── Stage 1: Build React app ──────────────────────────────────────────────
+FROM node:18-alpine AS builder
+WORKDIR /app
+COPY react-dashboard/package.json .
+RUN npm install ajv ajv-keywords --save-dev --legacy-peer-deps
+RUN npm install --legacy-peer-deps
+COPY react-dashboard/ .
+ARG REACT_APP_API_URL=http://localhost:8000
+ENV REACT_APP_API_URL=$REACT_APP_API_URL
+
+# Add this environment variable line:
+ENV DISABLE_ESLINT_PLUGIN=true
+RUN npm run build
+
+# ── Stage 2: Serve with Nginx ─────────────────────────────────────────────
+FROM nginx:alpine
+COPY --from=builder /app/build /usr/share/nginx/html
+COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]

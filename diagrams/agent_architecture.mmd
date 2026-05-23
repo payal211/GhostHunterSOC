@@ -1,0 +1,60 @@
+flowchart TD
+    subgraph SOURCES["Data Sources"]
+        SYN[Synthetic Generator]
+        WAZ[Wazuh SIEM]
+        MISP[MISP Threat Intel]
+        BOTS[Splunk BOTS v3]
+    end
+
+    subgraph KAFKA["Apache Kafka"]
+        T1[autonomsoc.raw-events]
+        T2[autonomsoc.alerts]
+        T3[autonomsoc.responses]
+    end
+
+    subgraph AGENTS["LangGraph Multi-Agent Pipeline"]
+        direction TB
+        A1["🔍 Agent 1\nIdentity Monitor\nModel: mistral"]
+        A2["📊 Agent 2\nBehavior Analyzer\nModel: mistral"]
+        A3["🧠 Agent 3\nThreat Intel RAG\nModel: llama3.1"]
+        A4["🔗 Agent 4\nCorrelation\nModel: llama3.1"]
+        A5["⚡ Agent 5\nResponse\nModel: mistral"]
+        A6["📋 Agent 6\nReporting\nModel: llama3.1"]
+        A1 -->|should_escalate=true| A2
+        A1 -->|should_escalate=false| END_A([END])
+        A2 --> A3
+        A3 --> A4
+        A4 --> A5
+        A5 --> A6
+    end
+
+    subgraph STORAGE["Storage Layer"]
+        NEO4J[(Neo4j\nAttack Graph)]
+        CHROMA[(ChromaDB\nMITRE RAG)]
+        OLLAMA[Ollama\nOn-Prem LLM]
+    end
+
+    subgraph OUTPUT["Output Layer"]
+        API[FastAPI\nREST + WebSocket]
+        HIVE[TheHive\nIncident Cases]
+        DASH[Next.js\nSOC Dashboard]
+    end
+
+    SOURCES --> T1
+    T1 --> CONSUMER[Kafka Consumer]
+    CONSUMER --> AGENTS
+    A3 <-->|vector search| CHROMA
+    A4 -->|write graph| NEO4J
+    A1 & A2 & A3 & A4 & A6 <-->|LLM calls| OLLAMA
+    A5 -->|create case| HIVE
+    A6 --> T2
+    T2 --> API
+    NEO4J --> API
+    CHROMA --> API
+    API -->|WebSocket| DASH
+
+    style SOURCES fill:#0D1F3C,stroke:#1A3A6B,color:#CBD5E1
+    style KAFKA   fill:#0D1F3C,stroke:#FFB400,color:#FFB400
+    style AGENTS  fill:#071828,stroke:#00D4FF,color:#CBD5E1
+    style STORAGE fill:#0D1F3C,stroke:#9B5DE5,color:#CBD5E1
+    style OUTPUT  fill:#0D1F3C,stroke:#00FF9C,color:#CBD5E1

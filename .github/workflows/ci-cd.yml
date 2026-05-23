@@ -1,0 +1,181 @@
+name: AutonomSOC CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_AGENTS:    ghcr.io/${{ github.repository }}/autonomsoc-agents
+  IMAGE_DASHBOARD: ghcr.io/${{ github.repository }}/autonomsoc-dashboard
+
+jobs:
+
+  # ── 1. Python Tests ────────────────────────────────────────────────────────
+  test-python:
+    name: Python Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pytest-asyncio httpx
+
+      - name: Lint with flake8
+        run: |
+          pip install flake8
+          flake8 . --count --select=E9,F63,F7,F82 --show-source \
+                    --max-line-length=120 --exclude=.git,__pycache__
+
+      - name: Run unit tests
+        run: pytest tests/ -v --tb=short
+        env:
+          OLLAMA_HOST:   "http://localhost:11434"
+          NEO4J_URI:     "bolt://localhost:7687"
+          KAFKA_BOOTSTRAP: "localhost:9092"
+
+  # ── 2. React Tests ─────────────────────────────────────────────────────────
+  test-react:
+    name: React Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: react-dashboard
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: react-dashboard/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Build React app
+        run: npm run build
+        env:
+          REACT_APP_API_URL: "http://localhost:8000"
+          CI: "false"  # treat warnings as warnings, not errors
+
+  # ── 3. Security Scan ───────────────────────────────────────────────────────
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: [test-python]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type:   "fs"
+          scan-ref:    "."
+          severity:    "CRITICAL,HIGH"
+          format:      "table"
+          exit-code:   "0"   # Don't fail build — report only
+
+      - name: Bandit Python security scan
+        run: |
+          pip install bandit
+          bandit -r . -x ./tests,./react-dashboard -ll -ii || true
+
+  # ── 4. Build & Push Docker Images ─────────────────────────────────────────
+  build-push:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    needs: [test-python, test-react]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & push agents image
+        uses: docker/build-push-action@v5
+        with:
+          context:    .
+          file:       docker/Dockerfile.agents
+          push:       true
+          tags: |
+            ${{ env.IMAGE_AGENTS }}:latest
+            ${{ env.IMAGE_AGENTS }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+
+      - name: Build & push dashboard image
+        uses: docker/build-push-action@v5
+        with:
+          context:    .
+          file:       docker/Dockerfile.dashboard
+          push:       true
+          build-args: REACT_APP_API_URL=https://api.autonomsoc.example.com
+          tags: |
+            ${{ env.IMAGE_DASHBOARD }}:latest
+            ${{ env.IMAGE_DASHBOARD }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+
+  # ── 5. Deploy to Kubernetes ────────────────────────────────────────────────
+  deploy-k8s:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: [build-push]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Configure kubeconfig
+        run: |
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+
+      - name: Update image tags in manifests
+        run: |
+          sed -i "s|IMAGE_TAG|${{ github.sha }}|g" k8s/*.yaml
+
+      - name: Apply Kubernetes manifests
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f k8s/secrets.yaml
+          kubectl apply -f k8s/deployment-agents.yaml
+          kubectl apply -f k8s/deployment-dashboard.yaml
+          kubectl apply -f k8s/services.yaml
+          kubectl apply -f k8s/ingress.yaml
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/autonomsoc-agents    -n autonomsoc --timeout=120s
+          kubectl rollout status deployment/autonomsoc-dashboard -n autonomsoc --timeout=120s
+
+      - name: Smoke test
+        run: |
+          sleep 10
+          kubectl run smoke-test --image=curlimages/curl --restart=Never \
+            --rm --attach -- curl -f http://autonomsoc-api.autonomsoc.svc/health

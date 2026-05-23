@@ -1,0 +1,65 @@
+services:
+  # ── Backend API ─────────────────────────────────────────────────────────
+  - type: web
+    name: autonomsoc-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    envVars:
+      - key: OLLAMA_HOST
+        value: https://your-ollama-instance.onrender.com
+      - key: OLLAMA_MODEL
+        value: llama3.1
+      - key: NEO4J_URI
+        fromService:
+          name: autonomsoc-neo4j
+          type: pserv
+          property: connectionString
+      - key: NEO4J_USER
+        value: neo4j
+      - key: NEO4J_PASSWORD
+        generateValue: true
+      - key: KAFKA_BROKER
+        fromService:
+          name: autonomsoc-kafka
+          type: pserv
+          property: connectionString
+      - key: ENV
+        value: production
+    healthCheckPath: /health
+    plan: standard
+
+  # ── Kafka Consumer ──────────────────────────────────────────────────────
+  - type: worker
+    name: autonomsoc-consumer
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    dockerCommand: python -m kafka.consumer
+    envVars:
+      - key: OLLAMA_HOST
+        fromService:
+          name: autonomsoc-backend
+          type: web
+          property: host
+      - key: KAFKA_BROKER
+        fromService:
+          name: autonomsoc-kafka
+          type: pserv
+          property: connectionString
+    plan: standard
+
+  # ── Frontend ────────────────────────────────────────────────────────────
+  - type: web
+    name: ghosthuntersoc-frontend
+    runtime: static
+    buildCommand: "cd react-dashboard && npm ci && npm run build"
+    staticPublishPath: "./react-dashboard/build"
+    envVars:
+      - key: REACT_APP_API_URL
+        value: https://autonomsoc-backend.onrender.com
+    routes:
+      - type: rewrite
+        source: "/*"
+        destination: "/index.html"
+    plan: starter

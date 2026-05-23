@@ -1,0 +1,309 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────
+# AutonomSOC — Full Enterprise Docker Stack
+# Logs → Kafka → AI Agents → Neo4j → Response → Dashboard
+#
+# Start:  docker-compose up -d
+# Stop:   docker-compose down -v
+# Logs:   docker-compose logs -f autonomsoc-api
+# ─────────────────────────────────────────────────
+
+networks:
+  autonomsoc-net:
+    driver: bridge
+
+volumes:
+  kafka-data:
+  zookeeper-data:
+  neo4j-data:
+  chroma-data:
+  wazuh-data:
+  misp-data:
+  thehive-data:
+  elasticsearch-data:
+
+services:
+
+  # ── ZOOKEEPER (Kafka dependency) ─────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: autonomsoc-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper
+    networks: [autonomsoc-net]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── KAFKA (Event Streaming) ───────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: autonomsoc-kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 24
+    volumes:
+      - kafka-data:/var/lib/kafka
+    networks: [autonomsoc-net]
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "kafka:29092"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # ── KAFKA UI (Visual monitoring) ─────────────────
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: autonomsoc-kafka-ui
+    depends_on: [kafka]
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: autonomsoc
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    networks: [autonomsoc-net]
+
+  # ── NEO4J (Attack Graph DB) ───────────────────────
+  neo4j:
+    image: neo4j:5.18
+    container_name: autonomsoc-neo4j
+    ports:
+      - "7474:7474"   # Browser UI
+      - "7687:7687"   # Bolt protocol
+    environment:
+      NEO4J_AUTH: neo4j/autonomsoc2026
+      NEO4J_PLUGINS: '["apoc", "graph-data-science"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*,gds.*
+      NEO4J_apoc_export_file_enabled: "true"
+    volumes:
+      - neo4j-data:/data
+    networks: [autonomsoc-net]
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "autonomsoc2026", "RETURN 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+
+  # ── CHROMADB (Vector Store / RAG) ────────────────
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: autonomsoc-chroma
+    ports:
+      - "8001:8000"
+    environment:
+      CHROMA_SERVER_HOST: 0.0.0.0
+      CHROMA_SERVER_HTTP_PORT: 8000
+      ANONYMIZED_TELEMETRY: "false"
+    volumes:
+      - chroma-data:/chroma/chroma
+    networks: [autonomsoc-net]
+
+  # ── OLLAMA (On-Prem LLM Runtime) ─────────────────
+  # If you already run Ollama locally on the host at port 11434,
+  # disable or remove this service to avoid a port conflict.
+  # Use OLLAMA_HOST=http://localhost:11434 for local backend runs,
+  # or OLLAMA_HOST=http://host.docker.internal:11434 when the backend runs in Docker.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: autonomsoc-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama-models:/root/.ollama
+    networks: [autonomsoc-net]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # Remove deploy section if no GPU available
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+
+  # ── ELASTICSEARCH (Log Storage) ──────────────────
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    container_name: autonomsoc-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks: [autonomsoc-net]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+
+  # ── WAZUH MANAGER (Open Source SIEM/XDR) ─────────
+  wazuh-manager:
+    image: wazuh/wazuh-manager:4.7.3
+    container_name: autonomsoc-wazuh
+    ports:
+      - "1514:1514/udp"
+      - "1515:1515"
+      - "514:514/udp"
+      - "55000:55000"
+    environment:
+      INDEXER_URL: https://elasticsearch:9200
+      INDEXER_USERNAME: admin
+      INDEXER_PASSWORD: SecretPassword
+    volumes:
+      - wazuh-data:/var/ossec/data
+    networks: [autonomsoc-net]
+
+  # ── MISP (Threat Intelligence) ────────────────────
+  misp:
+    image: coolacid/misp-docker:core-latest
+    container_name: autonomsoc-misp
+    ports:
+      - "8443:443"
+    environment:
+      MYSQL_HOST: misp-db
+      MYSQL_DATABASE: misp
+      MYSQL_USER: misp
+      MYSQL_PASSWORD: misp_password
+      MISP_ADMIN_EMAIL: admin@autonomsoc.local
+      MISP_ADMIN_PASSPHRASE: AutonomSOC2026!
+      MISP_BASEURL: https://localhost:8443
+    volumes:
+      - misp-data:/var/www/MISP
+    networks: [autonomsoc-net]
+
+  # ── THEHIVE (Incident Response) ───────────────────
+  thehive:
+    image: strangebee/thehive:5.2
+    container_name: autonomsoc-thehive
+    depends_on: [elasticsearch]
+    ports:
+      - "9000:9000"
+    environment:
+      TH_SECRET: autonomsoc-secret-key-2026
+      TH_ELASTICSEARCH_CLUSTER_NAME: docker-cluster
+      TH_ELASTICSEARCH_HOST: elasticsearch
+    volumes:
+      - thehive-data:/opt/thp/thehive/data
+    networks: [autonomsoc-net]
+
+  # ── SHUFFLE SOAR (Workflow Automation) ───────────
+  shuffle-backend:
+    image: ghcr.io/shuffle/shuffle-backend:latest
+    container_name: autonomsoc-shuffle-backend
+    ports:
+      - "5001:5001"
+    environment:
+      SHUFFLE_APP_HOTLOAD_FOLDER: /shuffle-apps
+      SHUFFLE_FILE_LOCATION: /shuffle-files
+      DATASTORE_EMULATOR_HOST: shuffle-datastore
+      SHUFFLE_DEFAULT_USERNAME: admin
+      SHUFFLE_DEFAULT_PASSWORD: AutonomSOC2026!
+    volumes:
+      - ./shuffle-apps:/shuffle-apps
+    networks: [autonomsoc-net]
+
+  # ── AUTONOMSOC KAFKA PRODUCER (Data Ingest) ──────
+  autonomsoc-producer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agents
+    container_name: autonomsoc-producer
+    command: python kafka/kafka_producer.py
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP: kafka:29092
+      WAZUH_API: http://wazuh-manager:55000
+      MISP_URL: http://misp:443
+      SIMULATION_MODE: "true"
+      ATTACK_SCENARIOS: "all"
+    networks: [autonomsoc-net]
+    restart: unless-stopped
+
+  # ── AUTONOMSOC AGENT PIPELINE ────────────────────
+  autonomsoc-agents:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agents
+    container_name: autonomsoc-agents
+    command: python kafka/kafka_consumer.py
+    depends_on:
+      kafka:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP: kafka:29092
+      # Use host.docker.internal if Ollama is running on the host machine and not in Docker.
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: autonomsoc2026
+      CHROMA_HOST: http://chromadb:8000
+      THEHIVE_URL: http://thehive:9000
+      THEHIVE_KEY: your-thehive-api-key
+    networks: [autonomsoc-net]
+    restart: unless-stopped
+    volumes:
+      - chroma-data:/app/chroma_db
+
+  # ── AUTONOMSOC API ────────────────────────────────
+  autonomsoc-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agents
+    container_name: autonomsoc-api
+    command: uvicorn api.api:app --host 0.0.0.0 --port 8000
+    depends_on: [autonomsoc-agents]
+    ports:
+      - "8000:8000"
+    environment:
+      KAFKA_BOOTSTRAP: kafka:29092
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: autonomsoc2026
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
+    networks: [autonomsoc-net]
+    restart: unless-stopped
+
+  # ── REACT DASHBOARD (Nginx) ───────────────────────
+  autonomsoc-dashboard:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dashboard
+    container_name: autonomsoc-dashboard
+    ports:
+      - "3000:80"
+    environment:
+      REACT_APP_API_URL: http://localhost:8000
+      REACT_APP_NEO4J_BROWSER: http://localhost:7474
+    depends_on: [autonomsoc-api]
+    networks: [autonomsoc-net]

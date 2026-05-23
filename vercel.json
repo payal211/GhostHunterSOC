@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "name": "ghosthuntersoc-dashboard",
+  "buildCommand": "cd react-dashboard && npm ci && npm run build",
+  "outputDirectory": "react-dashboard/build",
+  "framework": "create-react-app",
+  "installCommand": "cd react-dashboard && npm ci",
+  "env": {
+    "REACT_APP_API_URL": "https://autonomsoc-backend.onrender.com"
+  },
+  "regions": ["iad1"],
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin",  "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET,POST,DELETE,OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type" }
+      ]
+    }
+  ],
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://autonomsoc-backend.onrender.com/:path*" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
