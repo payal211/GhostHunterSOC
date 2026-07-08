@@ -35,7 +35,7 @@ python-dotenv>=1.0.0
 
 # ── PDF Generation & Export ────────────────────────────────
 reportlab>=4.0.0
-PyPDF2>=4.0.0
+PyPDF2>=3.0.1
 
 # ── Dev / Test ───────────────────────────────────────────────
 pytest>=8.0.0
