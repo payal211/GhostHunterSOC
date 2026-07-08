@@ -52,3 +52,5 @@ next-env.d.ts
 *.key
 kubeconfig
 /tmp/kubeconfig
+"presentation/GhostHunter_Jury_Presentation.pptx" 
+"presentation/create_presentation.py" 
