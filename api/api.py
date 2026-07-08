@@ -27,6 +27,62 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"],
 CASES:   Dict[str, Dict] = {}
 WS_CLIENTS: List[WebSocket] = []
 
+
+def _build_demo_graph_payload() -> Dict[str, Any]:
+    return {
+        "nodes_and_edges": [
+            {
+                "source": "svc_ci_cd_runner_331",
+                "source_type": "service_account",
+                "source_risk": 96,
+                "target": "/api/internal/admin",
+                "target_label": "Resource",
+                "relationship": "ACCESSED",
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            },
+            {
+                "source": "svc_ci_cd_runner_331",
+                "source_type": "service_account",
+                "source_risk": 96,
+                "target": "91.108.4.136",
+                "target_label": "IP",
+                "relationship": "USED_IP",
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            },
+            {
+                "source": "oauth_connector_219",
+                "source_type": "oauth_token",
+                "source_risk": 78,
+                "target": "svc_reporting_bot_447",
+                "target_label": "Identity",
+                "relationship": "MOVED_LATERALLY",
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            },
+            {
+                "source": "svc_reporting_bot_447",
+                "source_type": "service_account",
+                "source_risk": 91,
+                "target": "185.220.101.55",
+                "target_label": "IP",
+                "relationship": "USED_IP",
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            },
+        ],
+        "count": 4,
+        "demo_mode": True,
+    }
+
+
+def _build_demo_stats_payload() -> Dict[str, Any]:
+    return {
+        "identities": 4,
+        "resources": 3,
+        "incidents": 2,
+        "high_risk": 3,
+        "demo_mode": True,
+    }
+
+
 # ── Models ────────────────────────────────────────────────────────────────────
 class SecurityEvent(BaseModel):
     event_id:            Optional[str]  = None
@@ -265,30 +321,48 @@ def get_stats():
 @app.get("/graph/attack")
 def get_attack_graph():
     try:
-        from neo4j.neo4j_graph import AttackGraphDB
+        from attack_graph.neo4j_graph import AttackGraphDB
         db = AttackGraphDB()
         data = db.get_attack_graph(limit=100)
         db.close()
-        return {"nodes_and_edges": data, "count": len(data)}
+        if data:
+            return {"nodes_and_edges": data, "count": len(data)}
     except Exception as e:
-        return {"error": str(e), "nodes_and_edges": [], "count": 0}
+        print(f"[Graph] Falling back to demo graph: {e}")
+
+    return _build_demo_graph_payload()
 
 @app.get("/graph/stats")
 def get_graph_stats():
     try:
-        from neo4j.neo4j_graph import AttackGraphDB
+        from attack_graph.neo4j_graph import AttackGraphDB
         db = AttackGraphDB()
         stats = db.get_graph_stats()
         hi = db.get_high_risk_identities(min_risk=70)
         db.close()
-        return {**stats, "high_risk_identities": hi[:10]}
+        if stats:
+            return {**stats, "high_risk_identities": hi[:10]}
     except Exception as e:
-        return {"error": str(e)}
+        print(f"[Graph] Falling back to demo stats: {e}")
+
+    return _build_demo_stats_payload()
+
+@app.post("/graph/demo")
+def load_demo_graph():
+    try:
+        from attack_graph.neo4j_graph import AttackGraphDB
+        db = AttackGraphDB()
+        db.load_demo_scenario()
+        db.close()
+    except Exception as e:
+        print(f"[Graph] Demo load skipped: {e}")
+
+    return {"status": "loaded", **_build_demo_graph_payload(), **_build_demo_stats_payload()}
 
 @app.get("/graph/blast-radius/{identity_id}")
 def get_blast_radius(identity_id: str):
     try:
-        from neo4j.neo4j_graph import AttackGraphDB
+        from attack_graph.neo4j_graph import AttackGraphDB
         db = AttackGraphDB()
         result = db.get_blast_radius(identity_id)
         db.close()

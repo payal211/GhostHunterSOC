@@ -175,11 +175,13 @@ export default function AttackGraph({ api }) {
   };
 
   const loadDemo = async () => {
+    setLoading(true);
     try {
-      await fetch(`${api.replace(":8000",":8000")}/graph/stats`); // ping
-      // Load demo data into neo4j via backend
+      await fetch(`${api}/graph/demo`, { method: "POST" });
       setDemo(true);
-    } catch {}
+    } catch (e) {
+      console.error(e);
+    }
     await loadGraph();
   };
 
