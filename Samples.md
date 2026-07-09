@@ -22,6 +22,30 @@
   "historical_context": []
 }
 ```
+
+{
+  "events": [
+    {
+      "identity_id": "svc_reporting_bot_447",
+      "identity_type": "service_account",
+      "src_ip": "185.220.101.55",
+      "geo": "RU",
+      "event_type": "api_call",
+      "endpoint": "/api/v2/transactions",
+      "risk_score": 66,
+      "bytes_out": 180000,
+      "mfa_used": false,
+      "days_since_last_active": 42,
+      "is_anomaly": true,
+      "attack_type": "unusual_access_pattern"
+    }
+  ],
+  "historical_context": []
+}
+```
+This is a medium-severity example: the account is suspicious, but the activity is not yet a full exfiltration or privilege escalation.
+
+
 2. Example Response:
 ```
 [

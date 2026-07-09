@@ -76,6 +76,14 @@ docker-compose -f docker/docker-compose.yml build
 docker-compose -f docker/docker-compose.yml up -d
 ```
 
+## to re-build the docker
+```bash
+docker-compose -f docker/docker-compose.yml down
+docker system prune -f
+docker-compose -f docker/docker-compose.yml build
+docker-compose -f docker/docker-compose.yml up -d
+```
+
 # 2B. Or run local API and dashboard instead of Docker Compose
 ```bash
 python -m venv .venv

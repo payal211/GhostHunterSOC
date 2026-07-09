@@ -123,6 +123,43 @@ def _run_pipeline(event_dict: dict, all_events: list, case_id: str) -> dict:
     from agents.agent_pipeline import run_on_event
     return run_on_event(event_dict, all_events, case_id)
 
+
+def store_case_result(result: dict, event: dict, case_id: str) -> dict:
+    alert = result.get("identity_alert") or {}
+    threat = result.get("threat_intel") or {}
+    resp = result.get("response_actions") or {}
+
+    case = {
+        "case_id": case_id,
+        "status": "CONTAINED" if result.get("should_escalate") else "CLEARED",
+        "risk_level": result.get("risk_level", "LOW"),
+        "escalated": bool(result.get("should_escalate")),
+        "identity_id": alert.get("identity_id"),
+        "identity_type": alert.get("identity_type"),
+        "anomalies": alert.get("anomalies_detected", []),
+        "identity_explanation": alert.get("llm_explanation", ""),
+        "risk_score": alert.get("adjusted_risk_score", 0),
+        "mitre_technique": threat.get("primary_technique"),
+        "mitre_technique_name": threat.get("primary_technique_name"),
+        "mitre_tactic": threat.get("primary_tactic"),
+        "threat_assessment": threat.get("threat_assessment", ""),
+        "relevant_techniques": [t.get("technique_id") for t in threat.get("relevant_techniques", [])],
+        "blast_radius": result.get("correlation", {}).get("blast_radius_score", 0),
+        "related_event_count": result.get("correlation", {}).get("related_event_count", 0),
+        "attack_narrative": result.get("correlation", {}).get("attack_narrative", ""),
+        "correlation": result.get("correlation", {}),
+        "affected_identities": result.get("correlation", {}).get("affected_identities", []),
+        "response_actions": [p["playbook_name"] for p in resp.get("playbooks_executed", [])],
+        "mttc_seconds": resp.get("mttc_seconds", 0),
+        "report": result.get("final_report", ""),
+        "pipeline_log": result.get("pipeline_log", []),
+        "behavior_score": result.get("behavior_score", {}),
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "raw_event": event,
+    }
+    CASES[case_id] = case
+    return case
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.get("/")
 def root():
@@ -170,35 +207,7 @@ async def analyze(req: AnalyzeRequest, background_tasks: BackgroundTasks):
         threat = result.get("threat_intel")   or {}
         resp   = result.get("response_actions") or {}
 
-        case = {
-            "case_id":        case_id,
-            "status":         "CONTAINED" if result["should_escalate"] else "CLEARED",
-            "risk_level":     result["risk_level"],
-            "escalated":      result["should_escalate"],
-            "identity_id":    alert.get("identity_id"),
-            "identity_type":  alert.get("identity_type"),
-            "anomalies":      alert.get("anomalies_detected", []),
-            "identity_explanation": alert.get("llm_explanation", ""),
-            "risk_score":     alert.get("adjusted_risk_score", 0),
-            "mitre_technique":      threat.get("primary_technique"),
-            "mitre_technique_name": threat.get("primary_technique_name"),
-            "mitre_tactic":         threat.get("primary_tactic"),
-            "threat_assessment":     threat.get("threat_assessment", ""),
-            "relevant_techniques":   [t.get("technique_id") for t in threat.get("relevant_techniques", [])],
-            "blast_radius":         result.get("correlation",{}).get("blast_radius_score",0),
-            "related_event_count":  result.get("correlation",{}).get("related_event_count",0),
-            "attack_narrative":     result.get("correlation",{}).get("attack_narrative",""),
-            "correlation":          result.get("correlation", {}),
-            "affected_identities":  result.get("correlation",{}).get("affected_identities",[]),
-            "response_actions":     [p["playbook_name"] for p in resp.get("playbooks_executed",[])],
-            "mttc_seconds":         resp.get("mttc_seconds",0),
-            "report":         result.get("final_report",""),
-            "pipeline_log":   result.get("pipeline_log",[]),
-            "behavior_score": result.get("behavior_score",{}),
-            "created_at":     datetime.utcnow().isoformat()+"Z",
-            "raw_event":      event,
-        }
-        CASES[case_id] = case
+        case = store_case_result(result, event, case_id)
         results.append(case)
 
         # WebSocket broadcast
@@ -374,6 +383,16 @@ def get_blast_radius(identity_id: str):
 def list_mitre():
     from mitre.mitre_engine import MITREEngine
     return MITREEngine().get_all_techniques()
+
+@app.post("/cases/ingest")
+def ingest_case(payload: Dict[str, Any]):
+    result = payload.get("result", {})
+    event = payload.get("event", {})
+    case_id = payload.get("case_id") or f"DEMO-{str(uuid.uuid4())[:8].upper()}"
+    case = store_case_result(result, event, case_id)
+    if case.get("escalated"):
+        background_tasks = None
+    return {"status": "ingested", "case_id": case_id, "risk_level": case.get("risk_level"), "escalated": case.get("escalated")}
 
 @app.delete("/cases/reset")
 def reset():

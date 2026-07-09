@@ -13,6 +13,8 @@ Run:  python kafka_consumer.py
 
 import json, os, sys, uuid, time
 from datetime import datetime
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
 from confluent_kafka import Consumer, KafkaError
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -89,7 +91,7 @@ def run_consumer():
 
                     if result.get("should_escalate"):
                         stats["escalated"] += 1
-                        _handle_escalation(result, case_id)
+                        _handle_escalation(result, case_id, event)
                     else:
                         print(f"[{stats['total']:05d}] ✅ CLEARED → {event.get('identity_id','?')[:30]}")
                 except Exception as e:
@@ -106,7 +108,28 @@ def run_consumer():
         consumer.close()
 
 
-def _handle_escalation(result: dict, case_id: str):
+def _push_to_api(result: dict, case_id: str, event: dict):
+    api_url = os.getenv("AUTONOMSOC_API_URL", "http://127.0.0.1:8000")
+    payload = {
+        "event": event,
+        "result": result,
+        "case_id": case_id,
+    }
+    req = Request(
+        f"{api_url}/cases/ingest",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(req, timeout=10) as resp:
+            body = resp.read().decode("utf-8")
+            print(f"  [API] ✅ ingested incident: {body}")
+    except Exception as exc:
+        print(f"  [API] ⚠️ ingest failed: {exc}")
+
+
+def _handle_escalation(result: dict, case_id: str, event: dict):
     """Handles an escalated incident: log, TheHive, Kafka response topic."""
     alert  = result.get("identity_alert") or {}
     threat = result.get("threat_intel") or {}
@@ -123,6 +146,9 @@ def _handle_escalation(result: dict, case_id: str):
     # Push to TheHive if configured
     if os.getenv("THEHIVE_KEY"):
         _create_thehive_alert(result, case_id)
+
+    # Push into API-backed dashboard store
+    _push_to_api(result, case_id, event)
 
     # Save incident locally
     try:
