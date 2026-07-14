@@ -252,7 +252,7 @@ def export_case_pdf(case_id: str):
     if case_id not in CASES:
         raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
     try:
-        from backend.api.pdf_generator import generate_incident_report_pdf
+        from api.pdf_generator import generate_incident_report_pdf
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PDF generator import error: {e}")
 
@@ -276,7 +276,7 @@ def export_case_trace_pdf(case_id: str):
     if case_id not in CASES:
         raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
     try:
-        from backend.api.pdf_generator import generate_pipeline_trace_pdf
+        from api.pdf_generator import generate_pipeline_trace_pdf
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PDF generator import error: {e}")
 

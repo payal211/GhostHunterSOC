@@ -193,8 +193,11 @@ export default function AttackGraph({ api }) {
   return (
     <div style={{ padding:28 }}>
       <h1 style={{ margin:"0 0 6px", fontSize:24, fontWeight:800 }}>🔗 Attack Graph</h1>
-      <div style={{ color:C.muted, fontSize:13, marginBottom:22 }}>
+      <div style={{ color:C.muted, fontSize:13, marginBottom:6 }}>
         Neo4j-powered identity relationship and attack chain visualization
+      </div>
+      <div style={{ color:C.muted, fontSize:12, marginBottom:16 }}>
+        Note: attack graph counts are sourced from Neo4j persisted data and may differ from the live API case totals.
       </div>
 
       {/* Stats row */}

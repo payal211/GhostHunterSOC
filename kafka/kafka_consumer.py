@@ -16,6 +16,7 @@ from datetime import datetime
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 from confluent_kafka import Consumer, KafkaError
+from confluent_kafka.admin import AdminClient, NewTopic
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -42,8 +43,29 @@ CONSUMER_CONFIG = {
 EVENT_WINDOW: list = []
 MAX_WINDOW = 2000
 
+def ensure_topics_exist(bootstrap: str, topics: list[str]):
+    admin = AdminClient({"bootstrap.servers": bootstrap})
+    metadata = admin.list_topics(timeout=10)
+    existing = {t for t in metadata.topics}
+
+    missing = [t for t in topics if t not in existing]
+    if not missing:
+        return
+
+    new_topics = [NewTopic(t, num_partitions=1, replication_factor=1) for t in missing]
+    futures = admin.create_topics(new_topics)
+    for topic, future in futures.items():
+        try:
+            future.result(timeout=10)
+            print(f"✅ Created missing Kafka topic: {topic}")
+        except Exception as exc:
+            print(f"⚠️ Failed to create topic {topic}: {exc}")
+
+
 def run_consumer():
     from agents.agent_pipeline import run_on_event
+
+    ensure_topics_exist(KAFKA_BOOTSTRAP, TOPICS)
 
     consumer = Consumer(CONSUMER_CONFIG)
     consumer.subscribe(TOPICS)
@@ -110,13 +132,16 @@ def run_consumer():
 
 def _push_to_api(result: dict, case_id: str, event: dict):
     api_url = os.getenv("AUTONOMSOC_API_URL", "http://127.0.0.1:8000")
+    ingest_url = f"{api_url}/cases/ingest"
+
     payload = {
         "event": event,
         "result": result,
         "case_id": case_id,
     }
+
     req = Request(
-        f"{api_url}/cases/ingest",
+        ingest_url,
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -127,6 +152,8 @@ def _push_to_api(result: dict, case_id: str, event: dict):
             print(f"  [API] ✅ ingested incident: {body}")
     except Exception as exc:
         print(f"  [API] ⚠️ ingest failed: {exc}")
+        print(f"  [API] ⚠️ target URL: {ingest_url}")
+        print(f"  [API] ⚠️ check that the backend is running and AUTONOMSOC_API_URL is correct")
 
 
 def _handle_escalation(result: dict, case_id: str, event: dict):

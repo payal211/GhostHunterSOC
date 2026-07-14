@@ -72,18 +72,21 @@ function RiskBar({ label, count, total, color }) {
 }
 
 export default function Dashboard({ api }) {
-  const [stats,  setStats]  = useState(null);
-  const [cases,  setCases]  = useState([]);
-  const [loading,setLoading]= useState(true);
+  const [stats, setStats]       = useState(null);
+  const [graphStats, setGraphStats] = useState(null);
+  const [cases, setCases]       = useState([]);
+  const [loading, setLoading]   = useState(true);
 
   const load = async () => {
     try {
-      const [s, c] = await Promise.all([
-        fetch(`${api}/stats`).then(r=>r.json()),
-        fetch(`${api}/cases?limit=20&escalated=true`).then(r=>r.json()),
+      const [s, c, g] = await Promise.all([
+        fetch(`${api}/stats`).then(r => r.json()),
+        fetch(`${api}/cases?limit=20&escalated=true`).then(r => r.json()),
+        fetch(`${api}/graph/stats`).then(r => r.json()),
       ]);
       setStats(s);
       setCases(c.cases || []);
+      setGraphStats(g);
     } catch (e) {
       console.error("API unreachable:", e);
     } finally {
@@ -112,6 +115,11 @@ export default function Dashboard({ api }) {
           <h1 style={{ margin:0, fontSize:24, fontWeight:800 }}>🛡️ Live SOC Dashboard</h1>
           <div style={{ fontSize:12, color:C.muted, marginTop:4 }}>
             Auto-refreshing · {new Date().toLocaleTimeString()}
+            {graphStats?.incidents != null && (
+              <span style={{ marginLeft:16 }}>
+                Graph incidents: {graphStats.incidents.toLocaleString()} · Neo4j persisted
+              </span>
+            )}
           </div>
         </div>
         <button onClick={load} style={{ padding:"8px 18px", background:C.card,
@@ -133,6 +141,8 @@ export default function Dashboard({ api }) {
                     color={C.amber} icon={Zap} sub="Automated responses" />
         <MetricCard label="Critical" value={rb.CRITICAL||0}
                     color={C.red} icon={Shield} sub="Highest severity" />
+        <MetricCard label="Graph Incidents" value={graphStats?.incidents||0}
+                    color={C.purple} icon={TrendingUp} sub="Neo4j persisted count" />
       </div>
 
       {/* Main content split */}
