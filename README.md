@@ -1,6 +1,5 @@
 # 🛡️  GhostHunterSOC: Autonomous NHI Threat Detection and Response
 ## Agentic AI-Powered Autonomous Security Operations Center
-### TCS-Amex GenAI Hackathon 2026 · Cybersecurity Track
 
 ---
 
